@@ -55,10 +55,14 @@ jobs:
       - id: load_body
         if: steps.scrape.outputs.has_new == 'true'
         name: Load email body into output
+        shell: bash
         run: |
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat email_body.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "body<<EOF"
+            cat email_body.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
 
       - name: Send email (only when new)
         if: steps.scrape.outputs.has_new == 'true'
