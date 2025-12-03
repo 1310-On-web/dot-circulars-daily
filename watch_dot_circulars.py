@@ -55,7 +55,7 @@ SUM_DIR.mkdir(parents=True, exist_ok=True)
 
 # Gemini model setup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "Gemini 2.5 Flash-Lite")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
