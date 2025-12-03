@@ -72,6 +72,15 @@ jobs:
           script: |
             const fs = require('fs');
             core.setOutput('body', fs.readFileSync('email_body.txt','utf8'));
+
+      - id: get_receivers
+        name: Load recipients from file
+        run: |
+          # Remove empty lines and comments, join with commas
+          recipients=$(grep -v '^#' receivers.txt | grep -v '^[[:space:]]*$' | paste -sd "," -)
+          echo "recipients=$recipients" >> $GITHUB_OUTPUT
+
+
       
       # Send mail only when new
       - name: Send email (only when new)
@@ -84,6 +93,8 @@ jobs:
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
           subject: "DoT Circulars – ${{ steps.scrape.outputs.subject_suffix }}"
-          to: ${{ secrets.RECEIVER_EMAIL }}
+          to: ${{ steps.get_receivers.outputs.recipients }}
           from: ${{ secrets.EMAIL_USER }}
           body: ${{ steps.load_body.outputs.body }}
+      
+        
