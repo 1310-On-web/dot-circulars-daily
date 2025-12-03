@@ -2,9 +2,8 @@ name: DoT Circulars Daily Email
 
 on:
   schedule:
-    # Runs every day at 08:30 IST (which is 03:00 UTC)
-    - cron: "0 3 * * *"
-  workflow_dispatch: # allow manual runs from the Actions tab
+    - cron: "0 3 * * *"   # 08:30 IST
+  workflow_dispatch:
 
 jobs:
   scrape-and-email:
@@ -14,28 +13,48 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Show workspace
+        run: |
+          pwd
+          ls -la
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
+      - name: Python version
+        run: python -V
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scraper
-        run: python scraper.py
-
-      # (Optional) Give the CSV a date-stamped name alongside circulars.csv
-      - name: Create dated copy
+      - name: Run scraper (with verbose errors)
         run: |
-          DATE_TAG=$(date -u +"%Y-%m-%d")
-          cp circulars.csv "circulars_${DATE_TAG}.csv"
+          set -euxo pipefail
+          python scraper.py
+          echo "Scraper exit code: $?"
+
+      - name: Check CSV exists and preview
+        run: |
+          ls -la
+          test -f circulars.csv
+          echo "First 5 lines:"
+          head -n 5 circulars.csv || true
+
+      - name: Upload CSV as artifact (always, even if email fails)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dot-circulars
+          path: circulars.csv
 
       - name: Send email with CSV
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 465
+          secure: true
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
           subject: "DoT Circulars – Daily Report"
@@ -43,16 +62,6 @@ jobs:
           from: "DoT Scraper Bot <${{ secrets.EMAIL_USER }}>"
           body: |
             Hi,
-
             Attached are today's DoT circulars (CSV).
-            – Your GitHub Actions bot
-          secure: true
-          # attach the plain and the dated file (both are fine; keep one if you prefer)
-          attachments: |
-            circulars.csv
-            circulars_${{ steps.date.outputs.today }}.csv
-        env:
-          # To use the dated file in attachments with the line above,
-          # provide a date step (alternative approach below).
-          # We'll attach without this env in the final config; leaving this here as a reference.
-          DUMMY: "unused"
+            – GitHub Actions
+          attachments: circulars.csv
