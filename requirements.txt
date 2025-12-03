@@ -3,4 +3,4 @@ beautifulsoup4
 lxml
 urllib3
 PyMuPDF
-google-generativeai
+openai>=1.40.0
