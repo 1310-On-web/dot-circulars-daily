@@ -2,3 +2,5 @@ requests
 beautifulsoup4
 lxml
 urllib3
+PyMuPDF
+google-generativeai
