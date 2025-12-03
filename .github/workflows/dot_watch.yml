@@ -42,6 +42,12 @@ jobs:
           set -euxo pipefail
           python watch_dot_circulars.py
 
+      - name: Show generated email preview
+        run: |
+          echo "---------- email_body.txt ----------"
+          cat email_body.txt
+          echo "------------------------------------"
+
 
       - name: Commit CSV changes (if any)
         run: |
