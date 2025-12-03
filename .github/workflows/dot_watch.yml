@@ -34,10 +34,10 @@ jobs:
 
     
       - id: scrape
-        name: Run watcher with downloads & Gemini summaries
+        name: Run watcher with downloads & OpenAI summaries
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-1.5-flash
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o-mini   # or gpt-4.1-mini, gpt-4o
         run: |
           set -euxo pipefail
           python watch_dot_circulars.py
