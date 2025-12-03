@@ -138,28 +138,55 @@ def set_output(name, value):
         with open(gh_out, "a", encoding="utf-8") as f:
             f.write(f"{name}={value}\n")
 
+# ... existing imports and code ...
 
 if __name__ == "__main__":
     all_rows = scrape_all_rows()
+    print(f"Scraped rows this run: {len(all_rows)}")
+
     if not all_rows:
         print("WARNING: Scrape returned zero rows (site layout change?).")
         set_output("has_new", "false")
         raise SystemExit(0)
 
     seen = load_seen_ids()
+    print(f"Already in master CSV: {len(seen)}")
+
     new_rows = [r for r in all_rows if r["pdf_url"] not in seen]
+    print(f"New rows detected: {len(new_rows)}")
 
     if not new_rows:
         print("No new circulars.")
         set_output("has_new", "false")
         raise SystemExit(0)
 
-    # Optional: newest first (as they appear on page)
     append_to_master(new_rows)
     write_email_body(new_rows)
-
-    # Expose outputs to the workflow
     set_output("has_new", "true")
-    # Also expose a tiny one-line subject
     set_output("subject_suffix", f"{len(new_rows)} new")
     print(f"Appended {len(new_rows)} new rows to {MASTER_CSV}")
+
+# if __name__ == "__main__":
+#     all_rows = scrape_all_rows()
+#     if not all_rows:
+#         print("WARNING: Scrape returned zero rows (site layout change?).")
+#         set_output("has_new", "false")
+#         raise SystemExit(0)
+
+#     seen = load_seen_ids()
+#     new_rows = [r for r in all_rows if r["pdf_url"] not in seen]
+
+#     if not new_rows:
+#         print("No new circulars.")
+#         set_output("has_new", "false")
+#         raise SystemExit(0)
+
+#     # Optional: newest first (as they appear on page)
+#     append_to_master(new_rows)
+#     write_email_body(new_rows)
+
+#     # Expose outputs to the workflow
+#     set_output("has_new", "true")
+#     # Also expose a tiny one-line subject
+#     set_output("subject_suffix", f"{len(new_rows)} new")
+#     print(f"Appended {len(new_rows)} new rows to {MASTER_CSV}")
