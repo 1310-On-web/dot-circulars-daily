@@ -62,6 +62,6 @@ jobs:
           from: "DoT Scraper Bot <${{ secrets.EMAIL_USER }}>"
           body: |
             Hi,
-            Attached are today's DoT circulars (CSV).
-            – GitHub Actions
+            Attached are last 10 DoT circulars (CSV).
+            – Bhanu Tak
           attachments: circulars.csv
