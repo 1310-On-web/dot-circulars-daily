@@ -109,13 +109,15 @@ def load_seen_ids():
 
 
 def append_to_master(new_rows):
-    new_file = not MASTER_CSV.exists()
+    # Write header if file doesn't exist OR is empty
+    write_header = not MASTER_CSV.exists() or MASTER_CSV.stat().st_size == 0
     with MASTER_CSV.open("a", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        if new_file:
+        if write_header:
             w.writerow(["title", "publish_date", "pdf_url"])
         for r in new_rows:
             w.writerow([r["title"], r["publish_date"], r["pdf_url"]])
+
 
 
 def write_email_body(new_rows):
