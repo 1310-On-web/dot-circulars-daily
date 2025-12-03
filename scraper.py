@@ -91,3 +91,4 @@ if __name__ == "__main__":
     data = scrape_table_last_10()
     out = write_csv(data, "circulars.csv")
     print(f"Wrote {len(data)} rows to {out}")
+
