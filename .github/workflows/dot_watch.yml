@@ -1,0 +1,70 @@
+name: DoT Circulars Watcher (Hourly)
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # every hour (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to commit the CSV back to the repo
+
+jobs:
+  watch-and-notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # so we can commit back
+
+      - name: Show files (debug)
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 2 -type f
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - id: scrape
+        name: Run watcher
+        run: |
+          set -euxo pipefail
+          python watch_dot_circulars.py
+
+      - name: Commit CSV changes (if any)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/dot_circulars_master.csv || true
+          # Commit will fail with exit 1 if nothing changed; ignore that error
+          git commit -m "chore: update DoT master CSV [skip ci]" || echo "No changes to commit"
+          git push || echo "Nothing to push"
+
+      - id: load_body
+        if: steps.scrape.outputs.has_new == 'true'
+        name: Load email body into output
+        run: |
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat email_body.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Send email (only when new)
+        if: steps.scrape.outputs.has_new == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USER }}
+          password: ${{ secrets.EMAIL_PASS }}
+          subject: "DoT Circulars – ${{ steps.scrape.outputs.subject_suffix }}"
+          to: ${{ secrets.RECEIVER_EMAIL }}
+          from: ${{ secrets.EMAIL_USER }}
+          body: ${{ steps.load_body.outputs.body }}
