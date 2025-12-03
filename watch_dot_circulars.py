@@ -2,16 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-DoT Circulars Hourly Watcher + Gemini Summaries
+DoT Circulars Hourly Watcher + OpenAI Summaries
 -------------------------------------------------
 - Scrapes DoT circulars
-- Detects new items
-- Downloads PDFs
-- Summarizes each new circular using Google Gemini
-- Saves summaries and builds email body
-
+- Detects new items via master CSV
+- Downloads new PDFs into data/pdfs/
+- Extracts text and summarizes each new PDF with OpenAI
+- Saves summaries in data/summaries/
+- Builds email_body.txt for the mail step
+-------------------------------------------------
 Dependencies:
-    pip install requests beautifulsoup4 lxml urllib3 PyMuPDF google-generativeai
+  pip install -r requirements.txt
 """
 
 import csv
@@ -25,10 +26,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
-import google.generativeai as genai
 
-
-# -------------------- CONFIG --------------------
+# ---------- CONFIG ----------
 
 BASE = "https://dot.gov.in"
 LIST_URL = "https://dot.gov.in/all-circulars"
@@ -53,14 +52,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 PDF_DIR.mkdir(parents=True, exist_ok=True)
 SUM_DIR.mkdir(parents=True, exist_ok=True)
 
-# Gemini model setup
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "Gemini 2.5 Flash-Lite")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# OpenAI settings
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
-
-# -------------------- SESSION BUILDER --------------------
+# ---------- HTTP session ----------
 
 def build_session():
     s = requests.Session()
@@ -76,17 +72,14 @@ def build_session():
     s.mount("https://", adapter)
     return s
 
-
 SESSION = build_session()
 
-
-# -------------------- SCRAPER CORE --------------------
+# ---------- scraping ----------
 
 def get_soup(url):
     r = SESSION.get(url, headers=HEADERS, timeout=30, allow_redirects=True)
     r.raise_for_status()
     return BeautifulSoup(r.text, "lxml")
-
 
 def scrape_all_rows():
     soup = get_soup(LIST_URL)
@@ -99,23 +92,16 @@ def scrape_all_rows():
         tds = tr.find_all("td")
         if len(tds) < 3:
             continue
-
         title = tds[1].get_text(strip=True)
         date_text = tds[-1].get_text(strip=True)
         href = a.get("href", "")
         pdf_url = urljoin(LIST_URL, href) if href else ""
         if not pdf_url:
             continue
-
-        rows.append({
-            "title": title,
-            "publish_date": date_text,
-            "pdf_url": pdf_url
-        })
+        rows.append({"title": title, "publish_date": date_text, "pdf_url": pdf_url})
     return rows
 
-
-# -------------------- CSV MANAGEMENT --------------------
+# ---------- CSV management ----------
 
 def ensure_csv_headers():
     if not MASTER_CSV.exists() or MASTER_CSV.stat().st_size == 0:
@@ -124,17 +110,14 @@ def ensure_csv_headers():
             csv.writer(f).writerow(["title", "publish_date", "pdf_url"])
         print("Created master CSV with headers.")
 
-
 def load_seen_ids():
     ensure_csv_headers()
     seen = set()
     with MASTER_CSV.open("r", encoding="utf-8", newline="") as f:
-        r = csv.DictReader(f)
-        for row in r:
+        for row in csv.DictReader(f):
             if row.get("pdf_url"):
                 seen.add(row["pdf_url"])
     return seen
-
 
 def append_to_master(new_rows):
     ensure_csv_headers()
@@ -143,17 +126,20 @@ def append_to_master(new_rows):
         for r in new_rows:
             w.writerow([r["title"], r["publish_date"], r["pdf_url"]])
 
+# ---------- PDF download ----------
 
-# -------------------- PDF DOWNLOADER --------------------
+def safe_pdf_filename(pdf_url: str) -> str:
+    tail = pdf_url.split("/")[-1].split("?")[0] or "document.pdf"
+    return tail
 
-def download_pdf(pdf_url, save_dir):
-    filename = pdf_url.split("/")[-1].split("?")[0] or "document.pdf"
+def download_pdf(pdf_url, save_dir: Path) -> Path | None:
+    filename = safe_pdf_filename(pdf_url)
     dest = save_dir / filename
     if dest.exists():
         print(f"Already downloaded: {dest.name}")
         return dest
     try:
-        r = SESSION.get(pdf_url, headers=HEADERS, timeout=60, stream=True)
+        r = SESSION.get(pdf_url, headers=HEADERS, timeout=120, stream=True)
         r.raise_for_status()
         with open(dest, "wb") as f:
             shutil.copyfileobj(r.raw, f)
@@ -163,78 +149,149 @@ def download_pdf(pdf_url, save_dir):
         print(f"Failed to download {pdf_url}: {e}")
         return None
 
+# ---------- text extraction ----------
 
-# -------------------- TEXT EXTRACTION --------------------
-
-def extract_text(pdf_path, max_chars=80000):
-    """Extract text from a PDF using PyMuPDF."""
-    text = ""
-    with fitz.open(pdf_path) as doc:
-        for page in doc:
-            text += page.get_text()
-            if len(text) >= max_chars:
-                break
+def extract_text_from_pdf(pdf_path: Path, max_chars: int = 80_000) -> str:
+    text_parts = []
+    try:
+        with fitz.open(pdf_path) as doc:
+            for page in doc:
+                text_parts.append(page.get_text())
+                if sum(len(x) for x in text_parts) >= max_chars:
+                    break
+    except Exception as e:
+        print(f"Text extraction failed for {pdf_path.name}: {e}")
+        return ""
+    text = "\n".join(text_parts)
     return text[:max_chars]
 
+def chunk_text(s: str, chunk_size: int = 6000, overlap: int = 400) -> list[str]:
+    if not s:
+        return []
+    chunks = []
+    i = 0
+    n = len(s)
+    while i < n:
+        j = min(i + chunk_size, n)
+        chunks.append(s[i:j])
+        i = j - overlap if j < n else j
+        if i < 0:
+            i = 0
+    return chunks
 
-# -------------------- GEMINI SUMMARIZATION --------------------
+# ---------- OpenAI summarization ----------
 
-def summarize_with_gemini(pdf_text):
-    """Use Google Gemini to summarize circulars."""
-    if not GEMINI_API_KEY:
-        print("Gemini API key missing, skipping summarization.")
+def summarize_with_openai(pdf_text: str) -> str:
+    """
+    Map-reduce style summary via OpenAI (chat.completions).
+    Uses OPENAI_MODEL (default gpt-4o-mini).
+    """
+    if not OPENAI_API_KEY:
+        print("OPENAI_API_KEY missing; skipping summary.")
         return ""
 
-    prompt = f"""
-You are summarizing an official Indian government circular. 
-Write 5–8 concise bullet points that capture:
-- the subject and purpose
-- key directives or rules
-- effective dates or deadlines
-- obligations for stakeholders
-- and any notable context.
-
-Keep the tone neutral and formal.
-Text to summarize:
-{text if len(pdf_text) < 30000 else pdf_text[:30000]}
-"""
+    # lazy import so the script still runs without the package locally
     try:
-        model = genai.GenerativeModel(MODEL_NAME)
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        from openai import OpenAI
     except Exception as e:
-        print(f"Gemini summarization failed: {e}")
+        print(f"OpenAI SDK not available: {e}")
         return ""
 
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
-def save_summary(pdf_path, summary):
+    blocks = chunk_text(pdf_text, chunk_size=6000, overlap=400)
+    if not blocks:
+        return ""
+
+    partials = []
+    for idx, block in enumerate(blocks, 1):
+        prompt = (
+            "You are summarizing an official Indian government circular. "
+            "Write clear, neutral bullet points focusing on: subject/purpose, key directives, "
+            "effective dates/deadlines, compliance obligations, impacted entities, and penalties if any. "
+            "Avoid fluff; cite clause/section numbers only if present.\n\n"
+            f"TEXT (chunk {idx}/{len(blocks)}):\n{block}"
+        )
+        try:
+            resp = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            partials.append(resp.choices[0].message.content.strip())
+        except Exception as e:
+            print(f"OpenAI partial summary failed on chunk {idx}: {e}")
+
+    if not partials:
+        return ""
+
+    combined = "\n".join(partials)
+    final_prompt = (
+        "Combine the bullet points below into a final concise brief of 5–8 bullets. "
+        "Keep statutory references concise; ensure any dates or compliance actions are prominent.\n\n"
+        f"POINTS:\n{combined}"
+    )
+    try:
+        final = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": final_prompt}],
+            temperature=0.2,
+        )
+        return final.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"OpenAI final summary failed: {e}")
+        return ""
+
+def save_summary(pdf_path: Path, summary: str) -> Path | None:
     if not summary:
         return None
     out = SUM_DIR / (pdf_path.stem + ".summary.txt")
     out.write_text(summary, encoding="utf-8")
     return out
 
-
-# -------------------- EMAIL BODY --------------------
+# ---------- email body ----------
 
 def write_email_body(new_rows, downloaded_paths, summaries_map):
+    """
+    Build the email body including:
+    - Title
+    - Publish date
+    - Original PDF URL
+    - AI summary (if available)
+    - Saved filename
+    """
     lines = ["New DoT Circulars detected:\n"]
-    for i, r in enumerate(new_rows, 1):
+    name_to_summary = {name: summ for name, summ in summaries_map.items()}
+
+    for idx, r in enumerate(new_rows, 1):
         pdf_name = r["pdf_url"].split("/")[-1].split("?")[0]
-        lines.append(f"{i}. {r['title']}\n"
-                     f"   Date: {r['publish_date']}\n"
-                     f"   PDF:  {r['pdf_url']}")
-        summ = summaries_map.get(pdf_name, "")
-        if summ:
-            lines.append("   Summary:\n" + "\n".join(f"     {l}" for l in summ.splitlines()))
+        summary = (name_to_summary.get(pdf_name) or "").strip()
+
+        lines.append(f"{idx}. {r['title']}")
+        lines.append(f"   Date: {r['publish_date']}")
+        lines.append(f"   PDF (original): {r['pdf_url']}")
+
+        if summary:
+            if len(summary) > 2000:
+                summary = summary[:2000].rstrip() + " …"
+            lines.append("   AI Summary:")
+            for line in summary.splitlines():
+                lines.append(f"     {line}")
+        else:
+            lines.append("   AI Summary: (unavailable)")
+
+        lines.append(f"   Saved file: {pdf_name}")
         lines.append("")
-    lines.append("\nDownloaded files:")
-    for p in downloaded_paths:
-        lines.append(f" - {p.name}")
-    EMAIL_BODY_PATH.write_text("\n".join(lines), encoding="utf-8")
 
+    if downloaded_paths:
+        lines.append("Downloaded files this run:")
+        for p in downloaded_paths:
+            lines.append(f" - {p.name}")
 
-# -------------------- MAIN --------------------
+    EMAIL_BODY_PATH.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    print(f"Written email body for {len(new_rows)} new circular(s).")
+
+# ---------- GH outputs ----------
 
 def set_output(name, value):
     gh_out = os.environ.get("GITHUB_OUTPUT")
@@ -242,11 +299,11 @@ def set_output(name, value):
         with open(gh_out, "a", encoding="utf-8") as f:
             f.write(f"{name}={value}\n")
 
+# ---------- main ----------
 
 if __name__ == "__main__":
     all_rows = scrape_all_rows()
     print(f"Scraped rows this run: {len(all_rows)}")
-
     if not all_rows:
         set_output("has_new", "false")
         raise SystemExit(0)
@@ -254,7 +311,6 @@ if __name__ == "__main__":
     seen = load_seen_ids()
     new_rows = [r for r in all_rows if r["pdf_url"] not in seen]
     print(f"New rows detected: {len(new_rows)}")
-
     if not new_rows:
         set_output("has_new", "false")
         raise SystemExit(0)
@@ -269,14 +325,18 @@ if __name__ == "__main__":
 
     summaries_map = {}
     for p in downloaded_paths:
-        text = extract_text(p)
-        summary = summarize_with_gemini(text)
+        text = extract_text_from_pdf(p)
+        summary = summarize_with_openai(text)
         if summary:
             summaries_map[p.name] = summary
             save_summary(p, summary)
 
+    print("Summaries generated for files:", list(summaries_map.keys()))
     write_email_body(new_rows, downloaded_paths, summaries_map)
 
     set_output("has_new", "true")
     set_output("subject_suffix", f"{len(new_rows)} new")
-    print(f"Appended {len(new_rows)} new rows, downloaded {len(downloaded_paths)} PDFs, summarized {len(summaries_map)}.")
+    print(
+        f"Appended {len(new_rows)} new rows, downloaded {len(downloaded_paths)} PDFs, "
+        f"summarized {len(summaries_map)}."
+    )
