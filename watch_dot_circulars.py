@@ -228,43 +228,27 @@ def save_summary(pdf_path: Path, summary: str) -> Path | None:
 # ---------- email body ----------
 
 def write_email_body(new_rows, downloaded_paths, summaries_map):
-    """
-    Build the email body including:
-    - Title
-    - Publish date
-    - Original PDF URL
-    - AI summary (if available)
-    - Saved filename
-    """
-    lines = ["New DoT Circulars detected:\n"]
-    name_to_summary = {name: summ for name, summ in summaries_map.items()}
+    lines = ["New DoT Circulars Detected:\n"]
 
-    for idx, r in enumerate(new_rows, 1):
+    for i, r in enumerate(new_rows, 1):
         pdf_name = r["pdf_url"].split("/")[-1].split("?")[0]
-        summary = (name_to_summary.get(pdf_name) or "").strip()
+        summary = summaries_map.get(pdf_name, "").strip()
 
-        lines.append(f"{idx}. {r['title']}")
+        lines.append(f"{i}. {r['title']}")
         lines.append(f"   Date: {r['publish_date']}")
-        lines.append(f"   PDF (original): {r['pdf_url']}")
-
+        lines.append(f"   PDF: {r['pdf_url']}")
         if summary:
-            if len(summary) > 2000:
-                summary = summary[:2000].rstrip() + " …"
-            lines.append("   AI Summary:")
-            for line in summary.splitlines():
-                lines.append(f"     {line}")
+            lines.append(f"   Summary: {summary}")
         else:
-            lines.append("   AI Summary: (unavailable)")
-
-        lines.append(f"   Saved file: {pdf_name}")
+            lines.append("   Summary: (not available)")
         lines.append("")
 
     if downloaded_paths:
-        lines.append("Downloaded files this run:")
+        lines.append("Downloaded Files:")
         for p in downloaded_paths:
             lines.append(f" - {p.name}")
 
-    EMAIL_BODY_PATH.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    EMAIL_BODY_PATH.write_text("\n".join(lines).strip(), encoding="utf-8")
     print(f"Written email body for {len(new_rows)} new circular(s).")
 
 # ---------- GH outputs ----------
