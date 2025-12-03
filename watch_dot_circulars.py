@@ -180,17 +180,14 @@ def chunk_text(s: str, chunk_size: int = 6000, overlap: int = 400) -> list[str]:
     return chunks
 
 # ---------- OpenAI summarization ----------
-
 def summarize_with_openai(pdf_text: str) -> str:
     """
-    Map-reduce style summary via OpenAI (chat.completions).
-    Uses OPENAI_MODEL (default gpt-4o-mini).
+    Produce a short 2–3 line summary of what the circular is about.
     """
     if not OPENAI_API_KEY:
         print("OPENAI_API_KEY missing; skipping summary.")
         return ""
 
-    # lazy import so the script still runs without the package locally
     try:
         from openai import OpenAI
     except Exception as e:
@@ -199,48 +196,27 @@ def summarize_with_openai(pdf_text: str) -> str:
 
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-    blocks = chunk_text(pdf_text, chunk_size=6000, overlap=400)
-    if not blocks:
-        return ""
-
-    partials = []
-    for idx, block in enumerate(blocks, 1):
-        prompt = (
-            "You are summarizing an official Indian government circular. "
-            "Write clear, neutral bullet points focusing on: subject/purpose, key directives, "
-            "effective dates/deadlines, compliance obligations, impacted entities, and penalties if any. "
-            "Avoid fluff; cite clause/section numbers only if present.\n\n"
-            f"TEXT (chunk {idx}/{len(blocks)}):\n{block}"
-        )
-        try:
-            resp = client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-            partials.append(resp.choices[0].message.content.strip())
-        except Exception as e:
-            print(f"OpenAI partial summary failed on chunk {idx}: {e}")
-
-    if not partials:
-        return ""
-
-    combined = "\n".join(partials)
-    final_prompt = (
-        "Combine the bullet points below into a final concise brief of 5–8 bullets. "
-        "Keep statutory references concise; ensure any dates or compliance actions are prominent.\n\n"
-        f"POINTS:\n{combined}"
+    prompt = (
+        "Summarize the following Indian government circular in 2–3 plain sentences. "
+        "Avoid bullet points, markdown, or formatting. "
+        "Focus on what the circular is about, its key purpose, and any major directive.\n\n"
+        f"Text:\n{pdf_text[:20000]}"
     )
+
     try:
-        final = client.chat.completions.create(
+        resp = client.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": final_prompt}],
-            temperature=0.2,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
         )
-        return final.choices[0].message.content.strip()
+        summary = resp.choices[0].message.content.strip()
+        # Clean up any unwanted markdown
+        summary = summary.replace("**", "").replace("*", "")
+        return summary
     except Exception as e:
-        print(f"OpenAI final summary failed: {e}")
+        print(f"OpenAI summarization failed: {e}")
         return ""
+
 
 def save_summary(pdf_path: Path, summary: str) -> Path | None:
     if not summary:
