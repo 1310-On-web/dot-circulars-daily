@@ -55,13 +55,12 @@ jobs:
       - id: load_body
         if: steps.scrape.outputs.has_new == 'true'
         name: Load email body into output
-        shell: bash
-        run: |
-          {
-            echo "body<<EOF"
-            cat email_body.txt
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const content = fs.readFileSync('email_body.txt', 'utf8');
+            core.setOutput('body', content);
 
 
       - name: Send email (only when new)
