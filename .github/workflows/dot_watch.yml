@@ -73,7 +73,6 @@ jobs:
           username: ${{ secrets.EMAIL_USER }}
           password: ${{ secrets.EMAIL_PASS }}
           subject: "DoT Circulars – ${{ steps.scrape.outputs.subject_suffix }}"
-          # to: ${{ secrets.RECEIVER_EMAIL }}
-          to: bhanutak1310@gmail.com
+          to: ${{ secrets.RECEIVER_EMAIL }}
           from: ${{ secrets.EMAIL_USER }}
           body: ${{ steps.load_body.outputs.body }}
