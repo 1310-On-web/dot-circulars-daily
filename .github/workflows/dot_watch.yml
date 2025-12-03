@@ -62,7 +62,15 @@ jobs:
             const content = fs.readFileSync('email_body.txt', 'utf8');
             core.setOutput('body', content);
 
-
+      - name: Commit new PDFs and CSV
+        if: steps.scrape.outputs.has_new == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/dot_circulars_master.csv data/pdfs/*.pdf || true
+          git commit -m "Add new DoT PDFs and update CSV" || echo "No changes to commit"
+          git push || echo "No changes pushed"
+      
       - name: Send email (only when new)
         if: steps.scrape.outputs.has_new == 'true'
         uses: dawidd6/action-send-mail@v3
