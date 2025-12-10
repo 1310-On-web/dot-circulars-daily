@@ -1,9 +1,9 @@
 name: DoT Circulars Watcher (Hourly)
 
-on:
-  schedule:
-    - cron: "0 * * * *"   # every hour (UTC)
-  workflow_dispatch:
+# on:
+#   schedule:
+#     - cron: "0 * * * *"   # every hour (UTC)
+#   workflow_dispatch:
 
 permissions:
   contents: write   # needed to commit the CSV back to the repo
