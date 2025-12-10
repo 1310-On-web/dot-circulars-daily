@@ -1,9 +1,9 @@
 name: DoT Circulars Daily Email
 
-on:
-  schedule:
-    - cron: "0 3 * * *"   # 08:30 IST
-  workflow_dispatch:
+# on:
+#   schedule:
+#     - cron: "0 3 * * *"   # 08:30 IST
+#   workflow_dispatch:
 
 jobs:
   scrape-and-email:
