@@ -8,19 +8,51 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # IMPORTANT for pushing to main
+  contents: write
 
 jobs:
   run-dot-watch:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (full)
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
           persist-credentials: true
+
+      - name: Ensure main branch exists and checkout main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          echo "Fetching all refs..."
+          git fetch origin +refs/heads/*:refs/remotes/origin/*
+
+          # If remote main exists, checkout local main (create if missing)
+          if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+            echo "remote branch 'main' exists. Ensuring local 'main' and checking out."
+            if git show-ref --verify --quiet refs/heads/main; then
+              git checkout main
+              git reset --hard origin/main
+            else
+              git checkout -b main origin/main
+            fi
+          else
+            echo "remote branch 'main' does not exist. Creating 'main' from current HEAD and pushing."
+            # create local main if not exists, otherwise checkout
+            if git show-ref --verify --quiet refs/heads/main; then
+              git checkout main
+            else
+              git checkout -b main
+            fi
+            # Push new branch to origin
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" main
+          fi
+
+          echo "Now on branch: $(git rev-parse --abbrev-ref HEAD)"
+          git status --porcelain
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -32,32 +64,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml urllib3
 
-      - name: Debug - list repo files
-        run: |
-          echo "PWD: $(pwd)"
-          ls -la
-
       - name: Run script (dot_watcher.py)
         run: |
           if [ -f "./dot_watcher.py" ]; then
-            python dot_watcher.py
+            python ./dot_watcher.py
           else
-            echo "ERROR: dot_watcher.py not found!"
+            echo "ERROR: dot_watcher.py not found in repo root"
             ls -la
             exit 1
           fi
 
-      - name: Commit ANY changes in repository root and push to main
+      - name: Commit ANY changes and push to main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Stage ALL modified/created/deleted files
+          # Stage everything
           git add -A
 
-          # If no changes, exit silently
+          # If nothing staged, exit gracefully
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
@@ -65,5 +93,5 @@ jobs:
 
           git commit -m "Auto-update from DOT Watcher [CI]"
 
-          # Push directly to main
+          # Push to main using token
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main
