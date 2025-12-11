@@ -29,7 +29,7 @@ jobs:
 
       - name: Run DOT Watcher Script
         run: |
-          python dot_watch_minimal.py
+          python dot_watcher.py
 
       - name: Commit CSV + JSON changes
         run: |
