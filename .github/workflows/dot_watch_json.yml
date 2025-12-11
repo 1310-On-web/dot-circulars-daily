@@ -1,0 +1,46 @@
+name: DOT Watcher
+
+on:
+  schedule:
+    # 8:00 IST
+    - cron: '30 2 * * *'
+    # 11:00 IST
+    - cron: '30 5 * * *'
+    # 14:00 IST
+    - cron: '30 8 * * *'
+  workflow_dispatch:  # allow manual run
+
+jobs:
+  run-dot-watch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml urllib3
+
+      - name: Run DOT Watcher Script
+        run: |
+          python dot_watch_minimal.py
+
+      - name: Commit CSV + JSON changes
+        run: |
+          git config --local user.name "github-actions"
+          git config --local user.email "github-actions@github.com"
+          git add data/dot_circulars_master.csv
+          git add data/dot_new_entries.json
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "Update DOT master CSV & new entries JSON [CI]"
+            git push origin main
+          else
+            echo "No changes detected, nothing to commit."
+          fi
