@@ -36,11 +36,8 @@ HEADERS = {
     "Connection": "close",
 }
 
-DATA_DIR = Path("data")
-MASTER_CSV = DATA_DIR / "dot_circulars_master.csv"
-JSON_OUT = DATA_DIR / "dot_new_entries.json"
-
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+MASTER_CSV = "dot_circulars_master.csv"
+JSON_OUT = "dot_new_entries.json"
 
 # ---------- HTTP session ----------
 def build_session():
@@ -196,3 +193,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
