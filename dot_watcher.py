@@ -2,18 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 Minimal DoT watcher — writes CSV + JSON to repository root (no data/ folder).
-- Scrapes https://dot.gov.in/all-circulars
-- Compares against dot_circulars_master.csv in repo root
-- Appends new rows to master CSV
-- Writes dot_new_entries.json in repo root with metadata for new items
-No downloads, no summaries.
+Adds a safe 'pdf_filename' for each item and stores it in CSV + JSON.
 """
 
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, unquote
 import csv
 import json
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -84,42 +81,143 @@ def scrape_all_rows():
         rows.append({"title": title, "publish_date": date_text, "pdf_url": pdf_url})
     return rows
 
+# ---------- filename helpers ----------
+def filename_from_url(url: str) -> str:
+    """
+    Try to get a filename from the URL path (last segment). Returns empty string if none.
+    """
+    if not url:
+        return ""
+    try:
+        p = urlparse(url).path or ""
+        name = unquote(p.split("/")[-1] or "")
+        return name
+    except Exception:
+        return ""
+
+def sanitize_name(name: str, max_len: int = 120) -> str:
+    """
+    Turn arbitrary text into a safe filename body (without extension).
+    Keep alnum, underscore and hyphen. Collapse runs of invalid chars into underscore.
+    Trim to max_len.
+    """
+    if not name:
+        return ""
+    # Normalize whitespace, replace with single space
+    s = re.sub(r"\s+", " ", name).strip()
+    # Replace non-alnum (allow - and _) with underscore
+    s = re.sub(r"[^A-Za-z0-9\-_\. ]+", "", s)
+    s = s.replace(" ", "_")
+    if len(s) > max_len:
+        s = s[:max_len]
+    # Remove leading/trailing dots/underscores/hyphens
+    s = s.strip("._-")
+    return s or "document"
+
+def ensure_unique_name(base_name: str, existing: set[str]) -> str:
+    """
+    If base_name already in existing, append -1, -2... before the extension.
+    existing should contain full filenames (with extension).
+    """
+    if base_name not in existing:
+        return base_name
+    stem, dot, ext = base_name.rpartition(".")
+    if not dot:
+        stem = base_name
+        ext = ""
+    counter = 1
+    while True:
+        candidate = f"{stem}-{counter}.{ext}" if ext else f"{stem}-{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
+
+def make_pdf_filename(item: dict, existing_names: set[str]) -> str:
+    """
+    Given a scraped row (title, publish_date, pdf_url), produce a safe pdf filename.
+    Uses URL filename if present; otherwise uses sanitized title + date.
+    Ensures uniqueness against existing_names (set).
+    Always returns a filename ending with .pdf
+    """
+    url = item.get("pdf_url", "") or ""
+    url_name = filename_from_url(url)
+    if url_name and url_name.lower().endswith(".pdf"):
+        base = sanitize_name(url_name)
+        if not base.lower().endswith(".pdf"):
+            base = base + ".pdf"
+    else:
+        # Build from title + publish_date
+        title = item.get("title", "") or "document"
+        date_text = item.get("publish_date", "") or ""
+        # Try to keep date compact (YYYYMMDD) if possible
+        date_compact = re.sub(r"[^\d]", "", date_text)[:8]  # rough
+        parts = [title]
+        if date_compact:
+            parts.append(date_compact)
+        suggested = "_".join(parts)
+        suggested = sanitize_name(suggested)
+        if not suggested.lower().endswith(".pdf"):
+            suggested = suggested + ".pdf"
+        base = suggested
+
+    # ensure unique
+    final = ensure_unique_name(base, existing_names)
+    existing_names.add(final)
+    return final
+
 # ---------- CSV management ----------
 def ensure_csv_headers():
     mp = Path(MASTER_CSV)
     if not mp.exists() or mp.stat().st_size == 0:
         mp.parent.mkdir(parents=True, exist_ok=True)
         with mp.open("w", encoding="utf-8", newline="") as f:
-            csv.writer(f).writerow(["title", "publish_date", "pdf_url"])
+            csv.writer(f).writerow(["title", "publish_date", "pdf_url", "pdf_filename"])
         print(f"Created master CSV with headers at {mp}")
 
-def load_seen_ids():
+def load_seen_ids_and_names():
+    """
+    Returns two sets:
+      - seen_urls: pdf_url strings already present in csv
+      - seen_names: pdf_filename strings already present in csv (if present)
+    Handles older CSVs which might not have pdf_filename column.
+    """
     ensure_csv_headers()
-    seen = set()
+    seen_urls = set()
+    seen_names = set()
     mp = Path(MASTER_CSV)
     with mp.open("r", encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
+        dr = csv.DictReader(f)
+        for row in dr:
             if row.get("pdf_url"):
-                seen.add(row["pdf_url"])
-    return seen
+                seen_urls.add(row["pdf_url"])
+            # If csv has pdf_filename column, collect it
+            if row.get("pdf_filename"):
+                seen_names.add(row["pdf_filename"])
+            else:
+                # Try to infer from url if filename absent
+                u = row.get("pdf_url", "")
+                if u:
+                    fn = filename_from_url(u)
+                    if fn:
+                        seen_names.add(sanitize_name(fn))
+    return seen_urls, seen_names
 
-def append_to_master(new_rows):
+def append_to_master(new_rows_with_names):
     mp = Path(MASTER_CSV)
+    # If CSV existed but with older header (no pdf_filename), ensure we append correct columns.
+    # We'll always write in order: title, publish_date, pdf_url, pdf_filename
     with mp.open("a", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
-        for r in new_rows:
-            w.writerow([r.get("title", ""), r.get("publish_date", ""), r.get("pdf_url", "")])
-    print(f"Appended {len(new_rows)} rows to {mp}")
+        for r in new_rows_with_names:
+            w.writerow([r.get("title", ""), r.get("publish_date", ""), r.get("pdf_url", ""), r.get("pdf_filename", "")])
+    print(f"Appended {len(new_rows_with_names)} rows to {mp}")
 
 # ---------- JSON writing ----------
-def safe_filename_from_url(u: str) -> str:
-    return (u.split("/")[-1].split("?")[0]) if u else ""
-
-def write_json(new_rows, out_path=JSON_OUT):
+def write_json(new_rows_with_names, out_path=JSON_OUT):
     items = []
-    for r in new_rows:
+    for r in new_rows_with_names:
         items.append({
-            "name": safe_filename_from_url(r.get("pdf_url", "")),
+            "pdf_filename": r.get("pdf_filename", ""),
             "title": r.get("title", ""),
             "publish_date": r.get("publish_date", ""),
             "pdf_url": r.get("pdf_url", "")
@@ -146,18 +244,29 @@ def main():
         print("No rows found; exiting.")
         raise SystemExit(0)
 
-    seen = load_seen_ids()
-    new_rows = [r for r in all_rows if r["pdf_url"] not in seen]
-    print(f"New rows detected: {len(new_rows)}")
+    seen_urls, seen_names = load_seen_ids_and_names()
+    new_raw = [r for r in all_rows if r["pdf_url"] not in seen_urls]
+    print(f"New rows detected: {len(new_raw)}")
 
-    if not new_rows:
-        # Ensure JSON_out exists but with zero count (optional)
+    if not new_raw:
+        # Optionally write empty JSON (you can change this behaviour)
         write_json([], JSON_OUT)
         print("No new rows. Wrote empty JSON.")
         return
 
-    append_to_master(new_rows)
-    write_json(new_rows, JSON_OUT)
+    # Build pdf_filename for each new row, making sure filenames are unique
+    new_with_names = []
+    # Clone seen_names so we track duplicates across new items too
+    existing_names = set(seen_names)
+    for r in new_raw:
+        fn = make_pdf_filename(r, existing_names)
+        r2 = dict(r)
+        r2["pdf_filename"] = fn
+        new_with_names.append(r2)
+
+    # Append to master CSV and write JSON
+    append_to_master(new_with_names)
+    write_json(new_with_names, JSON_OUT)
     print("Done.")
 
 if __name__ == "__main__":
