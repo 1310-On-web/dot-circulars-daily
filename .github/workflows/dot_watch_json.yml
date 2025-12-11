@@ -1,6 +1,5 @@
 name: DOT Watcher JSON
 
-# Runs at 08:00, 11:00, 14:00 IST (converted to UTC: 02:30, 05:30, 08:30)
 on:
   schedule:
     - cron: '30 2 * * *'  # 08:00 IST
@@ -8,9 +7,8 @@ on:
     - cron: '30 8 * * *'  # 14:00 IST
   workflow_dispatch:
 
-# Allow push (write) to the repo using the GITHUB_TOKEN
 permissions:
-  contents: write
+  contents: write   # IMPORTANT for pushing to main
 
 jobs:
   run-dot-watch:
@@ -24,7 +22,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -34,33 +32,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml urllib3
 
-      - name: Run DOT Watcher Script
+      - name: Debug - list repo files
         run: |
-          python dot_watch.py
+          echo "PWD: $(pwd)"
+          ls -la
 
-      - name: Show git status (debug)
+      - name: Run script (dot_watcher.py)
         run: |
-          git status --porcelain
-          git ls-files data || true
+          if [ -f "./dot_watcher.py" ]; then
+            python dot_watcher.py
+          else
+            echo "ERROR: dot_watcher.py not found!"
+            ls -la
+            exit 1
+          fi
 
-      - name: Commit CSV + JSON changes (if any) and push
+      - name: Commit ANY changes in repository root and push to main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Add files (only those we expect)
-          git add data/dot_circulars_master.csv || true
-          git add data/dot_new_entries.json || true
+          # Stage ALL modified/created/deleted files
+          git add -A
 
-          # Exit early if nothing staged
+          # If no changes, exit silently
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
 
-          # Commit and push using the action token
-          git commit -m "Update DOT master CSV & new entries JSON [CI]" || true
-          # Push directly to main branch
+          git commit -m "Auto-update from DOT Watcher [CI]"
+
+          # Push directly to main
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main
