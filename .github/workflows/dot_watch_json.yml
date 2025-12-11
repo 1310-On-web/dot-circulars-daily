@@ -2,9 +2,9 @@ name: DOT Watcher JSON
 
 on:
   schedule:
-    - cron: '30 2 * * *'  # 08:00 IST
-    - cron: '30 5 * * *'  # 11:00 IST
-    - cron: '30 8 * * *'  # 14:00 IST
+    - cron: '30 2 * * *'  # 08:00 IST -> 02:30 UTC
+    - cron: '30 5 * * *'  # 11:00 IST -> 05:30 UTC
+    - cron: '30 8 * * *'  # 14:00 IST -> 08:30 UTC
   workflow_dispatch:
 
 permissions:
@@ -27,12 +27,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          echo "Fetching all refs..."
-          git fetch origin +refs/heads/*:refs/remotes/origin/*
-
-          # If remote main exists, checkout local main (create if missing)
+          git fetch origin +refs/heads/*:refs/remotes/origin/* || true
           if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
-            echo "remote branch 'main' exists. Ensuring local 'main' and checking out."
+            echo "Remote 'main' exists. Checking out and resetting."
             if git show-ref --verify --quiet refs/heads/main; then
               git checkout main
               git reset --hard origin/main
@@ -40,18 +37,15 @@ jobs:
               git checkout -b main origin/main
             fi
           else
-            echo "remote branch 'main' does not exist. Creating 'main' from current HEAD and pushing."
-            # create local main if not exists, otherwise checkout
+            echo "Remote 'main' does not exist. Creating local 'main' from current HEAD and pushing."
             if git show-ref --verify --quiet refs/heads/main; then
               git checkout main
             else
               git checkout -b main
             fi
-            # Push new branch to origin
             git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" main
           fi
-
-          echo "Now on branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
           git status --porcelain
 
       - name: Set up Python 3.11
@@ -64,7 +58,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 lxml urllib3
 
-      - name: Run script (dot_watcher.py)
+      - name: Run dot_watcher.py
         run: |
           if [ -f "./dot_watcher.py" ]; then
             python ./dot_watcher.py
@@ -82,10 +76,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Stage everything
           git add -A
 
-          # If nothing staged, exit gracefully
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
@@ -93,5 +85,4 @@ jobs:
 
           git commit -m "Auto-update from DOT Watcher [CI]"
 
-          # Push to main using token
           git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main
